@@ -1,4 +1,4 @@
-# CTP500-receipt-printer
+# CTP500-receipt-app
 
 A web application for printing text and images over Web Bluetooth to the Core Innovations CTP500 thermal printer (and compatible devices sold as "S Blue/Pink/White/Black Printer"). This is a modern, cross-platform replacement for the legacy Python desktop application.
 
@@ -22,8 +22,8 @@ _Coming soon on Cloudflare Pages_
 1.  **Clone the repository:**
 
     ```bash
-    git clone https://github.com/phamousq/CTP500-receipt-printer.git
-    cd CTP500-receipt-printer/CTP500-React
+    git clone https://github.com/BeardedTek/CTP500-receipt-app.git
+    cd CTP500-receipt-app/CTP500-React
     ```
 
 2.  **Install dependencies:**
