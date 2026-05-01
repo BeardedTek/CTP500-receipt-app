@@ -1,9 +1,11 @@
+name: ctp500-receipt-printer
+
 services:
   receipt-app:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ctp500-receipt-app:latest
+    image: ctp500-receipt-printer:latest
     ports:
       - "8080:80"
     restart: unless-stopped
