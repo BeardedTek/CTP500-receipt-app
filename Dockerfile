@@ -1,10 +1,10 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 
-COPY package.json package-lock.json ./
+COPY CTP500-React/package.json CTP500-React/package-lock.json ./
 RUN npm ci
 
-COPY . .
+COPY CTP500-React/ ./
 RUN npm run build
 
 FROM nginx:1.27-alpine AS runtime

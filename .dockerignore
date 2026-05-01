@@ -1,0 +1,6 @@
+CTP500-React/node_modules
+CTP500-React/dist
+.git
+.gitignore
+npm-debug.log*
+.DS_Store

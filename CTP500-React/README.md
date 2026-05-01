@@ -58,7 +58,7 @@ Disable with:
 
 ## Docker Deployment
 
-Run production container (Nginx serving Vite `dist/`):
+Run production container from the repository root (Nginx serving Vite `dist/`):
 
 ```bash
 docker compose up --build -d
@@ -72,3 +72,5 @@ Useful commands:
 docker compose logs -f
 docker compose down
 ```
+
+For Traefik labels, use `docker-compose.traefik.yml` from the repository root and move/copy it to `docker-compose.override.yml` when enabling Traefik defaults.

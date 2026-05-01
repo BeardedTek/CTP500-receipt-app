@@ -55,7 +55,7 @@ Disabled values include `?log=0`, `?log=false`, `?log=off`.
 
 ## Docker Deployment
 
-From `CTP500-React`:
+From the repository root:
 
 ```bash
 docker compose up --build -d
@@ -68,6 +68,28 @@ Useful commands:
 ```bash
 docker compose logs -f
 docker compose down
+```
+
+### GitHub Container Registry (GHCR)
+
+This repo includes a GitHub Action at `.github/workflows/publish-ghcr.yml` that publishes the Docker image to GHCR:
+
+- triggers on pushes to `main`
+- triggers on tags matching `v*`
+- supports manual runs via workflow dispatch
+
+Published image path:
+
+- `ghcr.io/beardedtek/ctp500-receipt-app`
+
+Typical tags include branch/tag names, short SHA, and `latest` on the default branch.
+
+### Traefik setup
+
+The repo includes `docker-compose.traefik.yml`. If you want Traefik labels to be auto-applied by default, move or copy it to `docker-compose.override.yml`:
+
+```bash
+cp docker-compose.traefik.yml docker-compose.override.yml
 ```
 
 ## BLE Technical Notes

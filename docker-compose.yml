@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ctp500-receipt-printer:latest
+    image: ghcr.io/beardedtek/ctp500-receipt-app:latest
     ports:
       - "8080:80"
     restart: unless-stopped
