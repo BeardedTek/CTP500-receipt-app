@@ -1,0 +1,2 @@
+# BLE discovery tool (run locally on Windows/macOS/Linux with Bluetooth).
+bleak>=0.22,<4

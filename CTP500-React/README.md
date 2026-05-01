@@ -1,5 +1,22 @@
 # React + TypeScript + Vite
 
+## Docker Deployment
+
+Run the app in a production container (Nginx serving Vite `dist/` output):
+
+```bash
+docker compose up --build -d
+```
+
+Then open [http://localhost:8080](http://localhost:8080).
+
+Useful commands:
+
+```bash
+docker compose logs -f
+docker compose down
+```
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:

@@ -1,6 +1,18 @@
-import { useState, useEffect, useCallback } from 'react';
-import { WRITE_CHAR_UUID, NOTIFY_CHAR_UUID, SERVICE_UUID } from '../services/bluetooth/constants';
-import { useActivityLog } from '../context/ActivityLogContext';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import {
+  WRITE_CHAR_UUID,
+  NOTIFY_CHAR_UUID,
+  SERVICE_UUID,
+  MINI_SERVICE_UUID,
+  MINI_WRITE_CHAR_UUID,
+  MINI_NOTIFY_CHAR_UUID,
+  OPTIONAL_GATT_SERVICES,
+  PRINTER_NAME_PREFIXES,
+} from '../services/bluetooth/constants';
+import {
+  getWebBluetoothEnvironment,
+  type WebBluetoothEnvironment,
+} from '../services/bluetooth/webBluetoothEnvironment';
 
 interface ConnectionState {
   device: BluetoothDevice | null;
@@ -11,9 +23,18 @@ interface ConnectionState {
   mtu: number;
 }
 
+export type GattPrinterProfile = 'ctp500' | 'mini_ae30' | null;
+export type BluetoothLogLevel = 'info' | 'error';
+
+interface UseBluetoothOptions {
+  onLog?: (level: BluetoothLogLevel, message: string) => void;
+}
+
 interface UseBluetoothReturn {
   connection: ConnectionState;
   isSupported: boolean;
+  webBluetoothEnv: WebBluetoothEnvironment;
+  gattProfile: GattPrinterProfile;
   startScan: () => void;
   disconnect: () => Promise<void>;
   writeData: (data: Uint8Array) => Promise<void>;
@@ -37,8 +58,7 @@ function parseBatteryFromNotify(data: DataView): { voltage: string; percentage: 
   return null;
 }
 
-export function useBluetooth(): UseBluetoothReturn {
-  const { addLog } = useActivityLog()!;
+export function useBluetooth(options: UseBluetoothOptions = {}): UseBluetoothReturn {
   const [connection, setConnection] = useState<ConnectionState>({
     device: null,
     status: 'disconnected',
@@ -47,18 +67,35 @@ export function useBluetooth(): UseBluetoothReturn {
     batteryVoltage: null,
     mtu: 23,
   });
-  const [isSupported] = useState(() => 'bluetooth' in navigator);
+  const webBluetoothEnv = useMemo(() => getWebBluetoothEnvironment(), []);
+  const isSupported = webBluetoothEnv.canUse;
   const [server, setServer] = useState<BluetoothRemoteGATTServer | null>(null);
   const [writeChar, setWriteChar] = useState<BluetoothRemoteGATTCharacteristic | null>(null);
   const [notifyChar, setNotifyChar] = useState<BluetoothRemoteGATTCharacteristic | null>(null);
   const [printerName, setPrinterName] = useState<string | null>(null);
+  /** Prefer write-with-response when the characteristic supports it (CTP500); Mini uses write-without-response only. */
+  const [writeUsesResponse, setWriteUsesResponse] = useState(true);
+  const [gattProfile, setGattProfile] = useState<GattPrinterProfile>(null);
+  const log = useCallback(
+    (level: BluetoothLogLevel, message: string) => {
+      options.onLog?.(level, message);
+      if (level === 'error') {
+        console.error(`[Bluetooth] ${message}`);
+      } else {
+        console.info(`[Bluetooth] ${message}`);
+      }
+    },
+    [options.onLog],
+  );
 
   const clearConnection = useCallback(() => {
     setServer(null);
     setWriteChar(null);
     setNotifyChar(null);
+    setWriteUsesResponse(true);
+    setGattProfile(null);
     setPrinterName(null);
-    setConnection(prev => ({
+    setConnection((prev) => ({
       ...prev,
       device: null,
       status: 'disconnected',
@@ -73,117 +110,149 @@ export function useBluetooth(): UseBluetoothReturn {
           await notifyChar.stopNotifications();
         }
         await server.disconnect();
-      } catch (e) {
+      } catch {
         // Ignore disconnect errors
       }
     }
     clearConnection();
-    addLog('info', 'Disconnected from printer');
-  }, [server, notifyChar, clearConnection, addLog]);
+    log('info', 'Disconnected from printer');
+  }, [server, notifyChar, clearConnection, log]);
 
   const handleNotify = useCallback((event: Event) => {
     const char = event.target as BluetoothRemoteGATTCharacteristic;
     const data = char.value!;
     const text = new TextDecoder('ascii').decode(data.buffer).replace(/\0+$/, '');
-    addLog('info', `Printer status: ${text}`);
+    log('info', `Printer status: ${text}`);
 
     const batt = parseBatteryFromNotify(data);
     if (batt) {
-      setConnection(prev => ({
+      setConnection((prev) => ({
         ...prev,
         batteryVoltage: batt.voltage,
         batteryLevel: batt.percentage,
       }));
     }
-  }, [addLog]);
+  }, [log]);
 
-  const connectToDevice = useCallback(async (device: BluetoothDevice) => {
-    setConnection(prev => ({ ...prev, status: 'connecting', error: null }));
-    addLog('info', `Connecting to ${device.name ?? device.id}...`);
+  const connectToDevice = useCallback(
+    async (device: BluetoothDevice) => {
+      setConnection((prev) => ({ ...prev, status: 'connecting', error: null }));
+      log('info', `Connecting to ${device.name ?? device.id}`);
 
-    try {
-      const gatt = device.gatt!;
-      await gatt.connect();
-      const serv = await gatt.getPrimaryService(SERVICE_UUID);
-      const [write, notify] = await Promise.all([
-        serv.getCharacteristic(WRITE_CHAR_UUID),
-        serv.getCharacteristic(NOTIFY_CHAR_UUID),
-      ]);
+      try {
+        const gatt = device.gatt!;
+        await gatt.connect();
 
-      setServer(gatt);
-      setWriteChar(write);
-      setNotifyChar(notify);
-      setPrinterName(device.name ?? null);
+        let serv: BluetoothRemoteGATTService;
+        let write: BluetoothRemoteGATTCharacteristic;
+        let notify: BluetoothRemoteGATTCharacteristic;
+        let negotiatedMtu = 23;
+        let profile: 'ctp500' | 'mini_ae30';
 
-      // Start notifications for battery/STATUS updates
-      notify.addEventListener('characteristicvaluechanged', handleNotify);
-      await notify.startNotifications();
+        try {
+          serv = await gatt.getPrimaryService(SERVICE_UUID);
+          [write, notify] = await Promise.all([
+            serv.getCharacteristic(WRITE_CHAR_UUID),
+            serv.getCharacteristic(NOTIFY_CHAR_UUID),
+          ]);
+          profile = 'ctp500';
+          setGattProfile('ctp500');
+        } catch {
+          serv = await gatt.getPrimaryService(MINI_SERVICE_UUID);
+          [write, notify] = await Promise.all([
+            serv.getCharacteristic(MINI_WRITE_CHAR_UUID),
+            serv.getCharacteristic(MINI_NOTIFY_CHAR_UUID),
+          ]);
+          profile = 'mini_ae30';
+          negotiatedMtu = 512;
+          setGattProfile('mini_ae30');
+        }
 
-      // Request printer status
-      await write.writeValueWithResponse(new Uint8Array([0x1e, 0x47, 0x03]));
+        const useResponse = !!write.properties.write;
+        setWriteUsesResponse(useResponse);
 
-      setConnection(prev => ({
-        ...prev,
-        device,
-        status: 'connected',
-        mtu: 23,
-      }));
-      addLog('info', `Connected (MTU: 23 bytes)`);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setConnection(prev => ({ ...prev, status: 'disconnected', error: msg }));
-      addLog('error', `Connection error: ${msg}`);
-      clearConnection();
-    }
-  }, [handleNotify, addLog, clearConnection]);
+        setServer(gatt);
+        setWriteChar(write);
+        setNotifyChar(notify);
+        setPrinterName(device.name ?? null);
+
+        notify.addEventListener('characteristicvaluechanged', handleNotify);
+        await notify.startNotifications();
+
+        if (profile === 'ctp500') {
+          await write.writeValueWithResponse(new Uint8Array([0x1e, 0x47, 0x03]));
+        }
+
+        setConnection((prev) => ({
+          ...prev,
+          device,
+          status: 'connected',
+          mtu: negotiatedMtu,
+        }));
+        log('info', `Connected (${profile}, MTU ~${negotiatedMtu} bytes)`);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setConnection((prev) => ({ ...prev, status: 'disconnected', error: msg }));
+        log('error', `Connection error: ${msg}`);
+        clearConnection();
+      }
+    },
+    [handleNotify, clearConnection, log],
+  );
 
   const startScan = useCallback(() => {
-    if (!isSupported) {
-      addLog('error', 'Web Bluetooth not supported in this browser');
+    if (!isSupported || !navigator.bluetooth) {
+      log('error', `Web Bluetooth not available: ${webBluetoothEnv.reason}`);
       return;
     }
-    setConnection(prev => ({ ...prev, status: 'scanning', error: null }));
-    addLog('info', 'Scanning for compatible printers (10s)...');
+    setConnection((prev) => ({ ...prev, status: 'scanning', error: null }));
+    log('info', `Scanning for compatible printers (${PRINTER_NAME_PREFIXES.join(', ')})...`);
 
-    navigator.bluetooth.requestDevice({
-      filters: [{ namePrefix: 'S ' }],
-      optionalServices: [SERVICE_UUID],
-    })
-    .then(device => {
-      addLog('info', `Found: ${device.name}`);
-      connectToDevice(device);
-    })
-    .catch(e => {
-      if (e instanceof Error && e.name !== 'NotFoundError') {
-        const msg = e.message;
-        setConnection(prev => ({ ...prev, status: 'disconnected', error: msg }));
-        addLog('error', `Scan error: ${msg}`);
-      } else {
-        setConnection(prev => ({ ...prev, status: 'disconnected' }));
+    navigator.bluetooth
+      .requestDevice({
+        filters: PRINTER_NAME_PREFIXES.map((namePrefix) => ({ namePrefix })),
+        optionalServices: [...OPTIONAL_GATT_SERVICES],
+      })
+      .then((device) => {
+        log('info', `Found: ${device.name}`);
+        void connectToDevice(device);
+      })
+      .catch((e) => {
+        if (e instanceof Error && e.name !== 'NotFoundError') {
+          const msg = e.message;
+          setConnection((prev) => ({ ...prev, status: 'disconnected', error: msg }));
+          log('error', `Scan error: ${msg}`);
+        } else {
+          setConnection((prev) => ({ ...prev, status: 'disconnected' }));
+        }
+      });
+  }, [isSupported, connectToDevice, webBluetoothEnv.reason, log]);
+
+  const writeData = useCallback(
+    async (data: Uint8Array) => {
+      if (!writeChar) throw new Error('Not connected');
+      const mtu = connection.mtu || 23;
+      const chunkSize = Math.max(20, Math.min(504, mtu - 3));
+      const totalChunks = Math.ceil(data.length / chunkSize);
+
+      for (let i = 0; i < data.length; i += chunkSize) {
+        const chunk = data.slice(i, i + chunkSize);
+        if (writeUsesResponse) {
+          await writeChar.writeValueWithResponse(chunk);
+        } else {
+          await writeChar.writeValueWithoutResponse(chunk);
+        }
+        if (totalChunks > 10 && Math.floor(i / chunkSize) % 10 === 0) {
+          log('info', `Sending... ${Math.min(i + chunkSize, data.length)}/${data.length} bytes`);
+        }
       }
-    });
-  }, [isSupported, addLog, connectToDevice]);
-
-  const writeData = useCallback(async (data: Uint8Array) => {
-    if (!writeChar) throw new Error('Not connected');
-    // Chunk to MTU-3 overhead for write-with-response
-    const mtu = connection.mtu || 23;
-    const chunkSize = Math.max(20, mtu - 3);
-    const totalChunks = Math.ceil(data.length / chunkSize);
-
-    for (let i = 0; i < data.length; i += chunkSize) {
-      const chunk = data.slice(i, i + chunkSize);
-      await writeChar.writeValueWithResponse(chunk);
-      if (totalChunks > 10 && Math.floor(i / chunkSize) % 10 === 0) {
-        addLog('info', `Sending... ${Math.min(i + chunkSize, data.length)}/${data.length} bytes`);
-      }
-    }
-    addLog('info', `Sent ${data.length} bytes`);
-  }, [writeChar, connection.mtu, addLog]);
+      log('info', `Sent ${data.length} bytes`);
+    },
+    [writeChar, writeUsesResponse, connection.mtu, log],
+  );
 
   useEffect(() => {
     return () => {
-      // Cleanup notifications on unmount
       if (notifyChar) {
         notifyChar.removeEventListener('characteristicvaluechanged', handleNotify);
       }
@@ -193,6 +262,8 @@ export function useBluetooth(): UseBluetoothReturn {
   return {
     connection,
     isSupported,
+    webBluetoothEnv,
+    gattProfile,
     startScan,
     disconnect,
     writeData,
