@@ -1,0 +1,36 @@
+# Supported BLE printers (order matters: first matching GATT service wins).
+# Optional fields per printer:
+#   mtu: integer hint for BLE chunk sizing (default 23)
+#   post_connect_write_hex: even-length hex bytes sent with write-with-response after notifications start
+#
+# Top-level `extra_optional_services` lists additional GATT UUIDs passed to Web Bluetooth
+# optionalServices (needed for some firmware paths).
+#
+# This file is served from the site root and re-fetched on each full page load (no rebuild needed).
+
+extra_optional_services:
+  - "0000ae3a-0000-1000-8000-00805f9b34fb"
+  - "0000af30-0000-1000-8000-00805f9b34fb"
+
+ctp500:
+  discovery_name: "S-series CTP500"
+  description: "Core Innovations CTP500 and compatible S Blue/Pink/White/Black printers"
+  model: "CTP500"
+  prefix:
+    - "S "
+  service: "49535343-fe7d-4ae5-8fa9-9fafd205e455"
+  write: "49535343-8841-43f4-a8d4-ecbe34729bb3"
+  notify: "49535343-1e4d-4bd9-ba61-23c647249616"
+  mtu: 23
+  post_connect_write_hex: "1e4703"
+
+mini_ae30:
+  discovery_name: "Mini AE30"
+  description: "Mini Printer and similar AE30 GATT thermal printers"
+  model: "Mini AE30"
+  prefix:
+    - "Mini Printer"
+  service: "0000ae30-0000-1000-8000-00805f9b34fb"
+  write: "0000ae01-0000-1000-8000-00805f9b34fb"
+  notify: "0000ae02-0000-1000-8000-00805f9b34fb"
+  mtu: 512

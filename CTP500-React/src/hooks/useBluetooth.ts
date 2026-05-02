@@ -1,18 +1,18 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  WRITE_CHAR_UUID,
-  NOTIFY_CHAR_UUID,
-  SERVICE_UUID,
-  MINI_SERVICE_UUID,
-  MINI_WRITE_CHAR_UUID,
-  MINI_NOTIFY_CHAR_UUID,
-  OPTIONAL_GATT_SERVICES,
-  PRINTER_NAME_PREFIXES,
-} from '../services/bluetooth/constants';
+  getBluetoothNamePrefixFilters,
+  getWebBluetoothOptionalServices,
+  getPrefixSummaryForLog,
+  type GattPrinterProfile,
+  type PrinterDefinition,
+} from '../config/parsePrintersYaml';
+import { usePrintersCatalog, type PrintersCatalogLoadState } from '../config/usePrintersCatalog';
 import {
   getWebBluetoothEnvironment,
   type WebBluetoothEnvironment,
 } from '../services/bluetooth/webBluetoothEnvironment';
+
+export type { GattPrinterProfile };
 
 interface ConnectionState {
   device: BluetoothDevice | null;
@@ -23,7 +23,6 @@ interface ConnectionState {
   mtu: number;
 }
 
-export type GattPrinterProfile = 'ctp500' | 'mini_ae30' | null;
 export type BluetoothLogLevel = 'info' | 'error';
 
 interface UseBluetoothOptions {
@@ -35,6 +34,7 @@ interface UseBluetoothReturn {
   isSupported: boolean;
   webBluetoothEnv: WebBluetoothEnvironment;
   gattProfile: GattPrinterProfile;
+  printersCatalog: PrintersCatalogLoadState;
   startScan: () => void;
   disconnect: () => Promise<void>;
   writeData: (data: Uint8Array) => Promise<void>;
@@ -59,6 +59,9 @@ function parseBatteryFromNotify(data: DataView): { voltage: string; percentage: 
 }
 
 export function useBluetooth(options: UseBluetoothOptions = {}): UseBluetoothReturn {
+  const printersCatalog = usePrintersCatalog();
+  const catalog = printersCatalog.status === 'ready' ? printersCatalog.catalog : null;
+
   const [connection, setConnection] = useState<ConnectionState>({
     device: null,
     status: 'disconnected',
@@ -136,6 +139,11 @@ export function useBluetooth(options: UseBluetoothOptions = {}): UseBluetoothRet
 
   const connectToDevice = useCallback(
     async (device: BluetoothDevice) => {
+      if (!catalog) {
+        log('error', 'Printer definitions are not loaded yet');
+        return;
+      }
+
       setConnection((prev) => ({ ...prev, status: 'connecting', error: null }));
       log('info', `Connecting to ${device.name ?? device.id}`);
 
@@ -143,30 +151,34 @@ export function useBluetooth(options: UseBluetoothOptions = {}): UseBluetoothRet
         const gatt = device.gatt!;
         await gatt.connect();
 
-        let serv: BluetoothRemoteGATTService;
-        let write: BluetoothRemoteGATTCharacteristic;
-        let notify: BluetoothRemoteGATTCharacteristic;
-        let negotiatedMtu = 23;
-        let profile: 'ctp500' | 'mini_ae30';
+        const connectionResult = await (async (): Promise<{
+          write: BluetoothRemoteGATTCharacteristic;
+          notify: BluetoothRemoteGATTCharacteristic;
+          matched: PrinterDefinition;
+        } | null> => {
+          for (const p of catalog.printers) {
+            try {
+              const serv = await gatt.getPrimaryService(p.service);
+              const [write, notify] = await Promise.all([
+                serv.getCharacteristic(p.write),
+                serv.getCharacteristic(p.notify),
+              ]);
+              return { write, notify, matched: p };
+            } catch {
+              continue;
+            }
+          }
+          return null;
+        })();
 
-        try {
-          serv = await gatt.getPrimaryService(SERVICE_UUID);
-          [write, notify] = await Promise.all([
-            serv.getCharacteristic(WRITE_CHAR_UUID),
-            serv.getCharacteristic(NOTIFY_CHAR_UUID),
-          ]);
-          profile = 'ctp500';
-          setGattProfile('ctp500');
-        } catch {
-          serv = await gatt.getPrimaryService(MINI_SERVICE_UUID);
-          [write, notify] = await Promise.all([
-            serv.getCharacteristic(MINI_WRITE_CHAR_UUID),
-            serv.getCharacteristic(MINI_NOTIFY_CHAR_UUID),
-          ]);
-          profile = 'mini_ae30';
-          negotiatedMtu = 512;
-          setGattProfile('mini_ae30');
+        if (!connectionResult) {
+          throw new Error('No supported printer GATT profile matched this device');
         }
+
+        const { write, notify, matched } = connectionResult;
+
+        const negotiatedMtu = matched.mtu;
+        setGattProfile(matched.id);
 
         const useResponse = !!write.properties.write;
         setWriteUsesResponse(useResponse);
@@ -179,8 +191,9 @@ export function useBluetooth(options: UseBluetoothOptions = {}): UseBluetoothRet
         notify.addEventListener('characteristicvaluechanged', handleNotify);
         await notify.startNotifications();
 
-        if (profile === 'ctp500') {
-          await write.writeValueWithResponse(new Uint8Array([0x1e, 0x47, 0x03]));
+        if (matched.postConnectBytes) {
+          const buf = new Uint8Array(matched.postConnectBytes);
+          await write.writeValueWithResponse(buf);
         }
 
         setConnection((prev) => ({
@@ -189,7 +202,10 @@ export function useBluetooth(options: UseBluetoothOptions = {}): UseBluetoothRet
           status: 'connected',
           mtu: negotiatedMtu,
         }));
-        log('info', `Connected (${profile}, MTU ~${negotiatedMtu} bytes)`);
+        log(
+          'info',
+          `Connected (${matched.id}: ${matched.discovery_name} / ${matched.model}, MTU ~${negotiatedMtu} bytes)`,
+        );
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         setConnection((prev) => ({ ...prev, status: 'disconnected', error: msg }));
@@ -197,7 +213,7 @@ export function useBluetooth(options: UseBluetoothOptions = {}): UseBluetoothRet
         clearConnection();
       }
     },
-    [handleNotify, clearConnection, log],
+    [handleNotify, clearConnection, log, catalog],
   );
 
   const startScan = useCallback(() => {
@@ -205,13 +221,22 @@ export function useBluetooth(options: UseBluetoothOptions = {}): UseBluetoothRet
       log('error', `Web Bluetooth not available: ${webBluetoothEnv.reason}`);
       return;
     }
+    if (!catalog) {
+      if (printersCatalog.status === 'loading') {
+        log('error', 'Printer definitions are still loading; wait a moment and try again.');
+      } else if (printersCatalog.status === 'error') {
+        log('error', `Printer definitions failed to load: ${printersCatalog.message}`);
+      }
+      return;
+    }
+
     setConnection((prev) => ({ ...prev, status: 'scanning', error: null }));
-    log('info', `Scanning for compatible printers (${PRINTER_NAME_PREFIXES.join(', ')})...`);
+    log('info', `Scanning for compatible printers (${getPrefixSummaryForLog(catalog)})...`);
 
     navigator.bluetooth
       .requestDevice({
-        filters: PRINTER_NAME_PREFIXES.map((namePrefix) => ({ namePrefix })),
-        optionalServices: [...OPTIONAL_GATT_SERVICES],
+        filters: getBluetoothNamePrefixFilters(catalog),
+        optionalServices: getWebBluetoothOptionalServices(catalog),
       })
       .then((device) => {
         log('info', `Found: ${device.name}`);
@@ -226,7 +251,7 @@ export function useBluetooth(options: UseBluetoothOptions = {}): UseBluetoothRet
           setConnection((prev) => ({ ...prev, status: 'disconnected' }));
         }
       });
-  }, [isSupported, connectToDevice, webBluetoothEnv.reason, log]);
+  }, [isSupported, connectToDevice, webBluetoothEnv.reason, log, catalog, printersCatalog]);
 
   const writeData = useCallback(
     async (data: Uint8Array) => {
@@ -264,6 +289,7 @@ export function useBluetooth(options: UseBluetoothOptions = {}): UseBluetoothRet
     isSupported,
     webBluetoothEnv,
     gattProfile,
+    printersCatalog,
     startScan,
     disconnect,
     writeData,

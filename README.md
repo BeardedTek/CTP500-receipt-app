@@ -94,7 +94,11 @@ cp docker-compose.traefik.yml docker-compose.override.yml
 
 ## BLE Technical Notes
 
-The app supports two known printer profiles:
+Supported printers, discovery name prefixes, and GATT UUIDs are defined in `CTP500-React/public/printers.yaml`. That file is served as a static asset and **fetched on each full page load** (no JS rebuild needed to change printers). To add another device, append a new top-level entry (see comments in that file for optional fields such as `mtu` and `post_connect_write_hex`).
+
+Use the in-app helper at **`/printer-setup`** (link on the receipt page) to pick any BLE device, inspect its GATT services, and copy a starter YAML block into `public/printers.yaml`.
+
+The app currently ships with:
 
 - CTP500 UART-style service
 - Mini AE30 service
