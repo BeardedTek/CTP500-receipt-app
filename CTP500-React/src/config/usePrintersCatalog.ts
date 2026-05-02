@@ -23,8 +23,10 @@ async function loadPrintersCatalog(): Promise<PrintersCatalog> {
 }
 
 /**
- * Loads built-in `printers.yaml`, then merges optional `printers/manifest.yaml` + `printers/<id>.yaml`
- * for user-added printers. Re-fetched on each full page load so ops can edit files without rebuilding.
+ * Loads built-in `printers.yaml`, then merges user fragments from `printers/` using a JSON directory
+ * index (`GET printers/`, nginx autoindex) or, if that is unavailable, the `printers:` list in
+ * `printers/manifest.yaml`. Optional `extra_optional_services` in the manifest are merged whenever
+ * that file exists. Re-fetched on each full page load so ops can edit files without rebuilding.
  */
 export function usePrintersCatalog(): PrintersCatalogLoadState {
   const [state, setState] = useState<PrintersCatalogLoadState>({ status: 'loading' });

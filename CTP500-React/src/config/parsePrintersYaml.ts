@@ -170,40 +170,94 @@ function normalizeUserPrinterStem(id: string): string {
   const stem = /\.ya?ml$/i.test(id) ? id.replace(/\.ya?ml$/i, '') : id;
   if (!/^[a-zA-Z0-9_-]+$/.test(stem)) {
     throw new Error(
-      `Invalid user printer id in manifest: ${id} (use alphanumeric, underscore, hyphen; optional .yaml suffix)`,
+      `Invalid user printer id "${id}" (use alphanumeric, underscore, hyphen; optional .yaml suffix)`,
     );
   }
   return stem;
 }
 
+/** Parse nginx `autoindex_format json` (or compatible dev server) body → sorted printer stems. */
+export function stemsFromNginxJsonAutoindex(jsonText: string): string[] | null {
+  let data: unknown;
+  try {
+    data = JSON.parse(jsonText) as unknown;
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(data)) return null;
+
+  const stems: string[] = [];
+  for (const item of data) {
+    if (typeof item !== 'object' || item === null || !('name' in item)) continue;
+    const name = (item as { name: unknown }).name;
+    if (typeof name !== 'string') continue;
+    const t = (item as { type?: string }).type;
+    if (t && t !== 'file' && t !== 'symlink') continue;
+    if (!/\.ya?ml$/i.test(name)) continue;
+    if (/^manifest\.ya?ml$/i.test(name)) continue;
+    if (/^printers\.ya?ml$/i.test(name)) continue;
+    const stem = name.replace(/\.ya?ml$/i, '');
+    if (!/^[a-zA-Z0-9_-]+$/.test(stem)) continue;
+    stems.push(stem);
+  }
+
+  stems.sort((a, b) => a.localeCompare(b));
+  return stems;
+}
+
 /**
- * Merge optional `public/printers/manifest.yaml` + `public/printers/<id>.yaml` into the built-in
- * catalog from `public/printers.yaml`. Missing manifest (HTTP 404) leaves `base` unchanged.
+ * Merge user `public/printers/*.yaml` into the built-in catalog from `public/printers.yaml`.
+ *
+ * **Discovery:** `GET printers/` must return nginx JSON autoindex (Docker). Vite dev/preview serves
+ * the same shape. Stems are sorted file names (excluding `manifest.yaml`).
+ *
+ * **Fallback:** If that response is missing or not JSON, use `printers:` from `manifest.yaml` if present.
+ *
+ * **Extras:** `extra_optional_services` from `manifest.yaml` are always merged when that file exists.
  */
 export async function mergeUserPrinterFragments(
   base: PrintersCatalog,
   urlPrefix: string,
 ): Promise<PrintersCatalog> {
   const manifestUrl = `${urlPrefix}printers/manifest.yaml`;
-  const res = await fetch(manifestUrl, { cache: 'no-store' });
-  if (!res.ok) {
+  const indexUrl = `${urlPrefix}printers/`;
+
+  const [idxRes, mfRes] = await Promise.all([
+    fetch(indexUrl, { cache: 'no-store', headers: { Accept: 'application/json' } }),
+    fetch(manifestUrl, { cache: 'no-store' }),
+  ]);
+
+  let manifestExtras: string[] = [];
+  let manifestStems: string[] = [];
+  if (mfRes.ok) {
+    const m = parseUserPrintersManifestText(await mfRes.text());
+    manifestExtras = m.extraOptionalServices;
+    manifestStems = m.printers.map((id) => normalizeUserPrinterStem(id));
+  }
+
+  let stemsFromDir: string[] | null = null;
+  if (idxRes.ok) {
+    stemsFromDir = stemsFromNginxJsonAutoindex(await idxRes.text());
+  }
+
+  const stems = stemsFromDir !== null ? stemsFromDir : manifestStems;
+
+  if (stems.length === 0 && manifestExtras.length === 0) {
     return base;
   }
 
-  const manifest = parseUserPrintersManifestText(await res.text());
   const baseIds = new Set(base.printers.map((p) => p.id));
   const seenUser = new Set<string>();
   const extraPrinters: PrinterDefinition[] = [];
 
-  for (const id of manifest.printers) {
-    const stem = normalizeUserPrinterStem(id);
+  for (const stem of stems) {
     if (baseIds.has(stem)) {
       throw new Error(
         `User printer "${stem}" conflicts with an id from printers.yaml; choose a different id`,
       );
     }
     if (seenUser.has(stem)) {
-      throw new Error(`Duplicate user printer id in manifest: ${stem}`);
+      throw new Error(`Duplicate user printer id: ${stem}`);
     }
     seenUser.add(stem);
 
@@ -217,7 +271,7 @@ export async function mergeUserPrinterFragments(
   }
 
   const mergedExtras = [...base.extraOptionalServices];
-  for (const u of manifest.extraOptionalServices) {
+  for (const u of manifestExtras) {
     if (!mergedExtras.some((x) => x.toLowerCase() === u.toLowerCase())) {
       mergedExtras.push(u);
     }

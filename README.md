@@ -94,11 +94,11 @@ cp docker-compose.traefik.yml docker-compose.override.yml
 
 ## BLE Technical Notes
 
-Built-in printers live in `CTP500-React/public/printers.yaml` (served from the site root). Optional user printers go under `CTP500-React/public/printers/`: add `public/printers/<id>.yaml` (fragment body, same fields as a built-in block) and list `<id>` under `printers:` in `public/printers/manifest.yaml`. User entries are **merged after** the built-in list for GATT probing. The app **re-fetches on each full page load** (no JS rebuild needed for edits).
+Built-in printers live in `CTP500-React/public/printers.yaml` (site root). User printers are YAML fragments in `CTP500-React/public/printers/<id>.yaml`. The app discovers them by fetching **`GET /printers/`**, which returns **JSON** (nginx `autoindex_format json` in the shipped image; Vite dev/preview serves the same shape). Every `*.yaml` in that folder except `manifest.yaml` is merged **after** the built-in list (sorted by file name). **`manifest.yaml` is optional**: use it for `extra_optional_services` and, only if `/printers/` is not available as JSON, a `printers:` id list. The catalog **re-fetches on each full page load** (no JS rebuild needed for edits).
 
-Docker Compose bind-mounts `./CTP500-React/public/printers` to `/usr/share/nginx/html/printers` so you can add user YAML on the host without rebuilding the image; built-ins stay in the image from `printers.yaml` unless you rebuild with a changed file.
+Docker Compose bind-mounts `./CTP500-React/public/printers` to `/usr/share/nginx/html/printers` so you can drop new YAML files on the host without rebuilding the image; built-ins stay in the image from `printers.yaml` unless you rebuild with a changed file.
 
-Use the in-app helper at **`/printer-setup`** (link on the receipt page) to pick any BLE device, inspect its GATT services, and copy a starter YAML fragment into `public/printers/<printer_id>.yaml`, then add that id to `public/printers/manifest.yaml`.
+Use the in-app helper at **`/printer-setup`** (link on the receipt page) to pick any BLE device, inspect its GATT services, and copy a starter YAML fragment into `public/printers/<printer_id>.yaml`.
 
 The app currently ships with:
 

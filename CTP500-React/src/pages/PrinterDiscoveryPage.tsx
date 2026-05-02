@@ -20,6 +20,9 @@ import {
   MINI_WRITE,
 } from './printerDiscovery/discoveryConstants';
 
+/** Upstream repo — use for “add built-in printer” issues. */
+const UPSTREAM_NEW_ISSUE_URL = 'https://github.com/BeardedTek/CTP500-receipt-app/issues/new';
+
 type Step = 'idle' | 'picking' | 'enumerating' | 'done' | 'error';
 
 function uniqServices(ids: BluetoothServiceUUID[]): BluetoothServiceUUID[] {
@@ -305,11 +308,59 @@ ${mtuLine}${postLine}`;
 
       <p className="text-sm text-gray-600">
         Opens the system Bluetooth picker for <strong>all</strong> nearby BLE devices. After you connect, this page
-        lists GATT services and characteristics and drafts a YAML fragment for{' '}
-        <code className="rounded bg-gray-100 px-1">public/printers/&lt;printer_id&gt;.yaml</code>. Built-in printers stay in{' '}
-        <code className="rounded bg-gray-100 px-1">public/printers.yaml</code>. Add the new file, append the id to{' '}
-        <code className="rounded bg-gray-100 px-1">public/printers/manifest.yaml</code> under <code className="rounded bg-gray-100 px-1">printers:</code>, and reload the app.
+        lists GATT services and characteristics and drafts a YAML fragment you can save as a user printer file (see
+        below). Built-in definitions live in <code className="rounded bg-gray-100 px-1">public/printers.yaml</code>; your
+        own printers go under <code className="rounded bg-gray-100 px-1">public/printers/</code>.
       </p>
+
+      <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-800">
+        <h2 className="font-semibold text-gray-900">How to add a printer to this project</h2>
+        <ol className="mt-2 list-decimal space-y-1.5 pl-5 marker:text-gray-500">
+          <li>
+            Connect to the device below and adjust the suggested UUIDs and prefixes until the draft matches your
+            hardware.
+          </li>
+          <li>
+            Save the YAML fragment as{' '}
+            <code className="rounded bg-white px-1 ring-1 ring-gray-200">public/printers/&lt;printer_id&gt;.yaml</code>,
+            using the same <code className="rounded bg-white px-1 ring-1 ring-gray-200">printer_id</code> as the
+            filename stem.
+          </li>
+          <li>Reload the app (full page load) so the browser picks up the new file.</li>
+          <li>
+            Optional: use <code className="rounded bg-white px-1 ring-1 ring-gray-200">public/printers/manifest.yaml</code> for{' '}
+            <code className="rounded bg-white px-1 ring-1 ring-gray-200">extra_optional_services</code> (extra GATT UUIDs),
+            or for a <code className="rounded bg-white px-1 ring-1 ring-gray-200">printers:</code> list only if your host
+            cannot serve JSON on <code className="rounded bg-white px-1 ring-1 ring-gray-200">/printers/</code>. Built-in
+            extras stay in <code className="rounded bg-white px-1 ring-1 ring-gray-200">printers.yaml</code>.
+          </li>
+        </ol>
+        <p className="mt-2 text-xs text-gray-600">
+          Discovery uses <code className="rounded bg-white px-1 ring-1 ring-gray-200">GET /printers/</code> for a JSON
+          directory index (nginx in Docker; Vite dev/preview matches the same format). Every{' '}
+          <code className="rounded bg-white px-1 ring-1 ring-gray-200">*.yaml</code> except{' '}
+          <code className="rounded bg-white px-1 ring-1 ring-gray-200">manifest.yaml</code> is loaded—no{' '}
+          <code className="rounded bg-white px-1 ring-1 ring-gray-200">printers:</code> list required. User printers run
+          after built-ins, sorted by file name.
+        </p>
+        <p className="mt-2 text-xs text-gray-600">
+          Docker: bind-mount your host <code className="rounded bg-white px-1 ring-1 ring-gray-200">public/printers</code>{' '}
+          directory so you can add or edit user printers without rebuilding the image (see the project README).
+        </p>
+        <p className="mt-3 border-t border-gray-200 pt-3 text-gray-700">
+          To have the printer included <strong>in the upstream app</strong> for everyone, please{' '}
+          <a
+            href={UPSTREAM_NEW_ISSUE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-blue-700 underline hover:text-blue-800"
+          >
+            open a GitHub issue
+          </a>{' '}
+          and paste or attach your printer YAML (the fragment file contents, plus the printer id and any notes about the
+          device model). Maintainers can then fold it into <code className="rounded bg-white px-1 ring-1 ring-gray-200">public/printers.yaml</code>.
+        </p>
+      </div>
 
       {!webEnv.canUse && (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
