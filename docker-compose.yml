@@ -8,4 +8,6 @@ services:
     image: ghcr.io/beardedtek/ctp500-receipt-app:latest
     ports:
       - "8080:80"
+    volumes:
+      - ./printers:/usr/share/nginx/html/printers:ro
     restart: unless-stopped

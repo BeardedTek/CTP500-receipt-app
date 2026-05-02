@@ -94,9 +94,11 @@ cp docker-compose.traefik.yml docker-compose.override.yml
 
 ## BLE Technical Notes
 
-Supported printers, discovery name prefixes, and GATT UUIDs are defined in `CTP500-React/public/printers.yaml`. That file is served as a static asset and **fetched on each full page load** (no JS rebuild needed to change printers). To add another device, append a new top-level entry (see comments in that file for optional fields such as `mtu` and `post_connect_write_hex`).
+Built-in printers live in `CTP500-React/public/printers.yaml` (served from the site root). Optional user printers go under `CTP500-React/public/printers/`: add `public/printers/<id>.yaml` (fragment body, same fields as a built-in block) and list `<id>` under `printers:` in `public/printers/manifest.yaml`. User entries are **merged after** the built-in list for GATT probing. The app **re-fetches on each full page load** (no JS rebuild needed for edits).
 
-Use the in-app helper at **`/printer-setup`** (link on the receipt page) to pick any BLE device, inspect its GATT services, and copy a starter YAML block into `public/printers.yaml`.
+Docker Compose bind-mounts `./CTP500-React/public/printers` to `/usr/share/nginx/html/printers` so you can add user YAML on the host without rebuilding the image; built-ins stay in the image from `printers.yaml` unless you rebuild with a changed file.
+
+Use the in-app helper at **`/printer-setup`** (link on the receipt page) to pick any BLE device, inspect its GATT services, and copy a starter YAML fragment into `public/printers/<printer_id>.yaml`, then add that id to `public/printers/manifest.yaml`.
 
 The app currently ships with:
 

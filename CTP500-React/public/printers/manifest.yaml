@@ -1,0 +1,7 @@
+# Optional user printers (merged after built-in `printers.yaml`).
+# For each id below, add a fragment file `public/printers/<id>.yaml` (same fields as a built-in block).
+# Order here is probe order after all built-in printers.
+
+extra_optional_services: []
+
+printers: []

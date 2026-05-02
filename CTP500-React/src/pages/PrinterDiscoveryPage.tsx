@@ -40,7 +40,7 @@ function yamlScalar(s: string): string {
 }
 
 function yamlList(items: string[]): string {
-  return items.map((p) => `    - ${yamlScalar(p)}`).join('\n');
+  return items.map((p) => `  - ${yamlScalar(p)}`).join('\n');
 }
 
 function suggestFromDiscovery(
@@ -271,18 +271,17 @@ export default function PrinterDiscoveryPage() {
       return '';
     }
     const mtuNum = Number.parseInt(mtu, 10);
-    const mtuLine = Number.isFinite(mtuNum) && mtuNum >= 23 ? `  mtu: ${mtuNum}\n` : '';
+    const mtuLine = Number.isFinite(mtuNum) && mtuNum >= 23 ? `mtu: ${mtuNum}\n` : '';
     const postLine =
-      postHex.trim().length > 0 ? `  post_connect_write_hex: ${yamlScalar(postHex.trim())}\n` : '';
-    return `${printerId.trim()}:
-  discovery_name: ${yamlScalar(discoveryName)}
-  description: ${yamlScalar(description)}
-  model: ${yamlScalar(model)}
-  prefix:
+      postHex.trim().length > 0 ? `post_connect_write_hex: ${yamlScalar(postHex.trim())}\n` : '';
+    return `discovery_name: ${yamlScalar(discoveryName)}
+description: ${yamlScalar(description)}
+model: ${yamlScalar(model)}
+prefix:
 ${yamlList(prefixes)}
-  service: ${yamlScalar(service)}
-  write: ${yamlScalar(write)}
-  notify: ${yamlScalar(notify)}
+service: ${yamlScalar(service)}
+write: ${yamlScalar(write)}
+notify: ${yamlScalar(notify)}
 ${mtuLine}${postLine}`;
   }, [printerId, discoveryName, description, model, prefixText, service, write, notify, mtu, postHex]);
 
@@ -306,9 +305,10 @@ ${mtuLine}${postLine}`;
 
       <p className="text-sm text-gray-600">
         Opens the system Bluetooth picker for <strong>all</strong> nearby BLE devices. After you connect, this page
-        lists GATT services and characteristics and drafts a <code className="rounded bg-gray-100 px-1">printers.yaml</code>{' '}
-        block. Add that block to <code className="rounded bg-gray-100 px-1">public/printers.yaml</code> on the server and
-        reload the app.
+        lists GATT services and characteristics and drafts a YAML fragment for{' '}
+        <code className="rounded bg-gray-100 px-1">public/printers/&lt;printer_id&gt;.yaml</code>. Built-in printers stay in{' '}
+        <code className="rounded bg-gray-100 px-1">public/printers.yaml</code>. Add the new file, append the id to{' '}
+        <code className="rounded bg-gray-100 px-1">public/printers/manifest.yaml</code> under <code className="rounded bg-gray-100 px-1">printers:</code>, and reload the app.
       </p>
 
       {!webEnv.canUse && (
@@ -320,7 +320,9 @@ ${mtuLine}${postLine}`;
 
       {printersCatalog.status === 'loading' && <p className="text-sm text-gray-600">Loading existing printer catalog…</p>}
       {printersCatalog.status === 'error' && (
-        <p className="text-sm text-red-600">Could not load printers.yaml ({printersCatalog.message}). Discovery still works with built-in UUID list.</p>
+        <p className="text-sm text-red-600">
+          Could not load printer catalog ({printersCatalog.message}). Discovery still works with built-in UUID list.
+        </p>
       )}
 
       <div className="flex flex-wrap gap-2">
@@ -339,7 +341,9 @@ ${mtuLine}${postLine}`;
         )}
       </div>
       {printersCatalog.status === 'loading' && webEnv.canUse && (
-        <p className="text-xs text-gray-500">Waiting for printers.yaml so optionalServices can include your existing printer UUIDs…</p>
+        <p className="text-xs text-gray-500">
+          Waiting for the printer catalog so optionalServices can include your existing printer UUIDs…
+        </p>
       )}
 
       {error && (
@@ -398,10 +402,10 @@ ${mtuLine}${postLine}`;
 
       {step === 'done' && services && (
         <div className="space-y-3 rounded-lg border p-4">
-          <h2 className="font-semibold">YAML block (edit, then copy into public/printers.yaml)</h2>
+          <h2 className="font-semibold">YAML fragment (save as public/printers/&lt;printer_id&gt;.yaml)</h2>
           <div className="grid gap-2 sm:grid-cols-2">
             <label className="text-sm">
-              <span className="text-gray-700">printer_id (YAML key)</span>
+              <span className="text-gray-700">printer_id (filename stem)</span>
               <input
                 value={printerId}
                 onChange={(e) => setPrinterId(e.target.value)}

@@ -1,4 +1,4 @@
-# Supported BLE printers (order matters: first matching GATT service wins).
+# Built-in BLE printers (order matters: first matching GATT service wins).
 # Optional fields per printer:
 #   mtu: integer hint for BLE chunk sizing (default 23)
 #   post_connect_write_hex: even-length hex bytes sent with write-with-response after notifications start
@@ -6,7 +6,8 @@
 # Top-level `extra_optional_services` lists additional GATT UUIDs passed to Web Bluetooth
 # optionalServices (needed for some firmware paths).
 #
-# This file is served from the site root and re-fetched on each full page load (no rebuild needed).
+# User-defined printers: add `public/printers/<id>.yaml` and list `<id>` under `printers:` in
+# `public/printers/manifest.yaml` (see that file). This file is re-fetched on each full page load.
 
 extra_optional_services:
   - "0000ae3a-0000-1000-8000-00805f9b34fb"

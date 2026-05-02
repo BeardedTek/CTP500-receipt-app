@@ -1,36 +1,40 @@
 import { useEffect, useState } from 'react';
-import { parsePrintersYamlText, type PrintersCatalog } from './parsePrintersYaml';
+import { mergeUserPrinterFragments, parsePrintersYamlText, type PrintersCatalog } from './parsePrintersYaml';
 
 export type PrintersCatalogLoadState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
   | { status: 'ready'; catalog: PrintersCatalog };
 
-function printersYamlUrl(): string {
+function urlPrefix(): string {
   const base = import.meta.env.BASE_URL;
-  const prefix = base.endsWith('/') ? base : `${base}/`;
-  return `${prefix}printers.yaml`;
+  return base.endsWith('/') ? base : `${base}/`;
+}
+
+async function loadPrintersCatalog(): Promise<PrintersCatalog> {
+  const prefix = urlPrefix();
+  const builtInUrl = `${prefix}printers.yaml`;
+  const res = await fetch(builtInUrl, { cache: 'no-store' });
+  if (!res.ok) {
+    throw new Error(`Failed to load ${builtInUrl}: HTTP ${res.status}`);
+  }
+  const base = parsePrintersYamlText(await res.text());
+  return await mergeUserPrinterFragments(base, prefix);
 }
 
 /**
- * Fetches `/printers.yaml` (under Vite base) once on mount. Each full page load re-fetches so ops
- * can edit the file on the server without rebuilding the JS bundle.
+ * Loads built-in `printers.yaml`, then merges optional `printers/manifest.yaml` + `printers/<id>.yaml`
+ * for user-added printers. Re-fetched on each full page load so ops can edit files without rebuilding.
  */
 export function usePrintersCatalog(): PrintersCatalogLoadState {
   const [state, setState] = useState<PrintersCatalogLoadState>({ status: 'loading' });
 
   useEffect(() => {
     let cancelled = false;
-    const url = printersYamlUrl();
 
     void (async () => {
       try {
-        const res = await fetch(url, { cache: 'no-store' });
-        if (!res.ok) {
-          throw new Error(`Failed to load ${url}: HTTP ${res.status}`);
-        }
-        const text = await res.text();
-        const catalog = parsePrintersYamlText(text);
+        const catalog = await loadPrintersCatalog();
         if (!cancelled) {
           setState({ status: 'ready', catalog });
         }

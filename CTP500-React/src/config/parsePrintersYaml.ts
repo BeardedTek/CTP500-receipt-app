@@ -1,6 +1,6 @@
 import { parse } from 'yaml';
 
-/** Runtime printer id (YAML top-level key for each printer). */
+/** Runtime printer id (YAML top-level key for each printer, or fragment filename). */
 export type GattPrinterProfile = string | null;
 
 export type PrinterDefinition = {
@@ -21,7 +21,7 @@ export type PrintersCatalog = {
   extraOptionalServices: readonly string[];
 };
 
-const META_EXTRA_KEY = 'extra_optional_services';
+export const META_EXTRA_KEY = 'extra_optional_services';
 
 function hexToBytes(hex: string): Uint8Array {
   const s = hex.replaceAll(/\s+/g, '').toLowerCase();
@@ -46,7 +46,98 @@ function asStringArray(v: unknown, path: string): string[] {
   return v as string[];
 }
 
-/** Parse and validate `printers.yaml` text (from network or bundled string). */
+/** Build one printer definition from a YAML mapping (fragment file body or nested block under an id). */
+export function printerDefinitionFromRaw(raw: Record<string, unknown>, id: string): PrinterDefinition {
+  const discovery_name = raw.discovery_name;
+  const description = raw.description;
+  const model = raw.model;
+  const prefix = raw.prefix;
+  const service = raw.service;
+  const write = raw.write;
+  const notify = raw.notify;
+  const mtuRaw = raw.mtu;
+  const postHex = raw.post_connect_write_hex;
+
+  if (typeof discovery_name !== 'string') throw new Error(`Printer "${id}": discovery_name must be a string`);
+  if (typeof description !== 'string') throw new Error(`Printer "${id}": description must be a string`);
+  if (typeof model !== 'string') throw new Error(`Printer "${id}": model must be a string`);
+  if (typeof service !== 'string') throw new Error(`Printer "${id}": service must be a UUID string`);
+  if (typeof write !== 'string') throw new Error(`Printer "${id}": write must be a UUID string`);
+  if (typeof notify !== 'string') throw new Error(`Printer "${id}": notify must be a UUID string`);
+
+  const prefixes = asStringArray(prefix, `Printer "${id}".prefix`);
+  if (prefixes.length === 0) {
+    throw new Error(`Printer "${id}": prefix must be non-empty`);
+  }
+
+  let mtu = 23;
+  if (mtuRaw !== undefined) {
+    if (typeof mtuRaw !== 'number' || !Number.isFinite(mtuRaw) || mtuRaw < 23) {
+      throw new Error(`Printer "${id}": mtu must be a number >= 23`);
+    }
+    mtu = Math.floor(mtuRaw);
+  }
+
+  let postConnectBytes: Uint8Array | null = null;
+  if (postHex !== undefined) {
+    if (typeof postHex !== 'string') throw new Error(`Printer "${id}": post_connect_write_hex must be a string`);
+    postConnectBytes = hexToBytes(postHex);
+  }
+
+  return {
+    id,
+    discovery_name,
+    description,
+    model,
+    prefix: prefixes,
+    service,
+    write,
+    notify,
+    mtu,
+    postConnectBytes,
+  };
+}
+
+/** Parse a single `public/printers/<id>.yaml` fragment (root mapping = printer fields only). */
+export function parsePrinterFragmentYaml(yamlText: string, printerId: string): PrinterDefinition {
+  const doc = parse(yamlText) as unknown;
+  if (!isRecord(doc)) {
+    throw new Error(`Printer "${printerId}": YAML root must be a mapping`);
+  }
+  return printerDefinitionFromRaw(doc, printerId);
+}
+
+/** Optional `public/printers/manifest.yaml`: extra UUIDs + user printer ids (fragment filenames). */
+export type UserPrintersManifest = {
+  extraOptionalServices: string[];
+  /** User printer ids = `public/printers/<id>.yaml` stems, appended after built-in `printers.yaml`. */
+  printers: string[];
+};
+
+/** Parse user manifest under `public/printers/manifest.yaml`. */
+export function parseUserPrintersManifestText(text: string): UserPrintersManifest {
+  const doc = parse(text) as Record<string, unknown>;
+  const extraRaw = doc[META_EXTRA_KEY];
+  let extraOptionalServices: string[] = [];
+  if (extraRaw !== undefined) {
+    if (!Array.isArray(extraRaw) || extraRaw.some((x) => typeof x !== 'string')) {
+      throw new Error(`manifest ${META_EXTRA_KEY} must be an array of UUID strings`);
+    }
+    extraOptionalServices = extraRaw as string[];
+  }
+
+  const listRaw = doc.printers ?? doc.printer_files;
+  let printers: string[] = [];
+  if (listRaw !== undefined) {
+    if (!Array.isArray(listRaw) || listRaw.some((x) => typeof x !== 'string')) {
+      throw new Error('manifest: "printers" must be an array of printer ids (filename stems)');
+    }
+    printers = listRaw as string[];
+  }
+  return { extraOptionalServices, printers };
+}
+
+/** Parse legacy monolithic `printers.yaml` (multiple printer keys at root). */
 export function parsePrintersYamlText(yamlText: string): PrintersCatalog {
   const doc = parse(yamlText) as Record<string, unknown>;
   const extraRaw = doc[META_EXTRA_KEY];
@@ -65,55 +156,7 @@ export function parsePrintersYamlText(yamlText: string): PrintersCatalog {
     if (!isRecord(raw)) {
       throw new Error(`Printer "${id}": expected a mapping`);
     }
-
-    const discovery_name = raw.discovery_name;
-    const description = raw.description;
-    const model = raw.model;
-    const prefix = raw.prefix;
-    const service = raw.service;
-    const write = raw.write;
-    const notify = raw.notify;
-    const mtuRaw = raw.mtu;
-    const postHex = raw.post_connect_write_hex;
-
-    if (typeof discovery_name !== 'string') throw new Error(`Printer "${id}": discovery_name must be a string`);
-    if (typeof description !== 'string') throw new Error(`Printer "${id}": description must be a string`);
-    if (typeof model !== 'string') throw new Error(`Printer "${id}": model must be a string`);
-    if (typeof service !== 'string') throw new Error(`Printer "${id}": service must be a UUID string`);
-    if (typeof write !== 'string') throw new Error(`Printer "${id}": write must be a UUID string`);
-    if (typeof notify !== 'string') throw new Error(`Printer "${id}": notify must be a UUID string`);
-
-    const prefixes = asStringArray(prefix, `Printer "${id}".prefix`);
-    if (prefixes.length === 0) {
-      throw new Error(`Printer "${id}": prefix must be non-empty`);
-    }
-
-    let mtu = 23;
-    if (mtuRaw !== undefined) {
-      if (typeof mtuRaw !== 'number' || !Number.isFinite(mtuRaw) || mtuRaw < 23) {
-        throw new Error(`Printer "${id}": mtu must be a number >= 23`);
-      }
-      mtu = Math.floor(mtuRaw);
-    }
-
-    let postConnectBytes: Uint8Array | null = null;
-    if (postHex !== undefined) {
-      if (typeof postHex !== 'string') throw new Error(`Printer "${id}": post_connect_write_hex must be a string`);
-      postConnectBytes = hexToBytes(postHex);
-    }
-
-    printers.push({
-      id,
-      discovery_name,
-      description,
-      model,
-      prefix: prefixes,
-      service,
-      write,
-      notify,
-      mtu,
-      postConnectBytes,
-    });
+    printers.push(printerDefinitionFromRaw(raw, id));
   }
 
   if (printers.length === 0) {
@@ -121,6 +164,69 @@ export function parsePrintersYamlText(yamlText: string): PrintersCatalog {
   }
 
   return { printers, extraOptionalServices };
+}
+
+function normalizeUserPrinterStem(id: string): string {
+  const stem = /\.ya?ml$/i.test(id) ? id.replace(/\.ya?ml$/i, '') : id;
+  if (!/^[a-zA-Z0-9_-]+$/.test(stem)) {
+    throw new Error(
+      `Invalid user printer id in manifest: ${id} (use alphanumeric, underscore, hyphen; optional .yaml suffix)`,
+    );
+  }
+  return stem;
+}
+
+/**
+ * Merge optional `public/printers/manifest.yaml` + `public/printers/<id>.yaml` into the built-in
+ * catalog from `public/printers.yaml`. Missing manifest (HTTP 404) leaves `base` unchanged.
+ */
+export async function mergeUserPrinterFragments(
+  base: PrintersCatalog,
+  urlPrefix: string,
+): Promise<PrintersCatalog> {
+  const manifestUrl = `${urlPrefix}printers/manifest.yaml`;
+  const res = await fetch(manifestUrl, { cache: 'no-store' });
+  if (!res.ok) {
+    return base;
+  }
+
+  const manifest = parseUserPrintersManifestText(await res.text());
+  const baseIds = new Set(base.printers.map((p) => p.id));
+  const seenUser = new Set<string>();
+  const extraPrinters: PrinterDefinition[] = [];
+
+  for (const id of manifest.printers) {
+    const stem = normalizeUserPrinterStem(id);
+    if (baseIds.has(stem)) {
+      throw new Error(
+        `User printer "${stem}" conflicts with an id from printers.yaml; choose a different id`,
+      );
+    }
+    if (seenUser.has(stem)) {
+      throw new Error(`Duplicate user printer id in manifest: ${stem}`);
+    }
+    seenUser.add(stem);
+
+    const fileUrl = `${urlPrefix}printers/${stem}.yaml`;
+    const fr = await fetch(fileUrl, { cache: 'no-store' });
+    if (!fr.ok) {
+      throw new Error(`Failed to load user printer file ${fileUrl}: HTTP ${fr.status}`);
+    }
+    extraPrinters.push(parsePrinterFragmentYaml(await fr.text(), stem));
+    baseIds.add(stem);
+  }
+
+  const mergedExtras = [...base.extraOptionalServices];
+  for (const u of manifest.extraOptionalServices) {
+    if (!mergedExtras.some((x) => x.toLowerCase() === u.toLowerCase())) {
+      mergedExtras.push(u);
+    }
+  }
+
+  return {
+    printers: [...base.printers, ...extraPrinters],
+    extraOptionalServices: mergedExtras,
+  };
 }
 
 export function getWebBluetoothOptionalServices(catalog: PrintersCatalog): BluetoothServiceUUID[] {
