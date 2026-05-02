@@ -166,11 +166,12 @@ export function parsePrintersYamlText(yamlText: string): PrintersCatalog {
   return { printers, extraOptionalServices };
 }
 
-function normalizeUserPrinterStem(id: string): string {
+/** Normalizes `my_printer` or `my_printer.yaml` to a safe fragment filename stem. */
+export function normalizePrinterFileStem(id: string): string {
   const stem = /\.ya?ml$/i.test(id) ? id.replace(/\.ya?ml$/i, '') : id;
   if (!/^[a-zA-Z0-9_-]+$/.test(stem)) {
     throw new Error(
-      `Invalid user printer id "${id}" (use alphanumeric, underscore, hyphen; optional .yaml suffix)`,
+      `Invalid printer id "${id}" (use letters, numbers, underscore, hyphen; optional .yaml suffix)`,
     );
   }
   return stem;
@@ -232,7 +233,7 @@ export async function mergeUserPrinterFragments(
   if (mfRes.ok) {
     const m = parseUserPrintersManifestText(await mfRes.text());
     manifestExtras = m.extraOptionalServices;
-    manifestStems = m.printers.map((id) => normalizeUserPrinterStem(id));
+    manifestStems = m.printers.map((id) => normalizePrinterFileStem(id));
   }
 
   let stemsFromDir: string[] | null = null;

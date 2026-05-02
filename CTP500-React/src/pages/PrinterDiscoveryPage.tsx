@@ -1,7 +1,12 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { usePrintersCatalog } from '../config/usePrintersCatalog';
-import { getWebBluetoothOptionalServices } from '../config/parsePrintersYaml';
+import { getWebBluetoothOptionalServices, normalizePrinterFileStem } from '../config/parsePrintersYaml';
+import {
+  addOrUpdateSessionPrinter,
+  clearSessionPrinters,
+  getSessionPrinterRecords,
+} from '../config/sessionPrinters';
 import { getWebBluetoothEnvironment } from '../services/bluetooth/webBluetoothEnvironment';
 import {
   enumerateGattServer,
@@ -188,6 +193,7 @@ export default function PrinterDiscoveryPage() {
   const [mtu, setMtu] = useState('23');
   const [postHex, setPostHex] = useState('');
   const [matchNote, setMatchNote] = useState('');
+  const [sessionUiMessage, setSessionUiMessage] = useState<string | null>(null);
 
   const disconnect = useCallback(async () => {
     if (serverRef) {
@@ -297,6 +303,28 @@ ${mtuLine}${postLine}`;
     }
   }, [generatedYaml]);
 
+  const enableSessionPrinter = useCallback(() => {
+    setSessionUiMessage(null);
+    if (!generatedYaml?.trim() || !printerId.trim()) {
+      setSessionUiMessage('Set printer_id and complete the draft YAML before enabling.');
+      return;
+    }
+    try {
+      const id = normalizePrinterFileStem(printerId.trim());
+      addOrUpdateSessionPrinter(id, generatedYaml);
+      setSessionUiMessage(
+        `Saved “${id}” for this tab only. It overrides any catalog printer with the same id until you clear tab-only printers.`,
+      );
+    } catch (e) {
+      setSessionUiMessage(e instanceof Error ? e.message : String(e));
+    }
+  }, [generatedYaml, printerId]);
+
+  const clearSessionOnlyPrinters = useCallback(() => {
+    clearSessionPrinters();
+    setSessionUiMessage('Cleared all tab-only printers for this tab.');
+  }, []);
+
   return (
     <div className="mx-auto max-w-3xl space-y-4 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -307,48 +335,52 @@ ${mtuLine}${postLine}`;
       </div>
 
       <p className="text-sm text-gray-600">
-        Opens the system Bluetooth picker for <strong>all</strong> nearby BLE devices. After you connect, this page
-        lists GATT services and characteristics and drafts a YAML fragment you can save as a user printer file (see
-        below). Built-in definitions live in <code className="rounded bg-gray-100 px-1">public/printers.yaml</code>; your
-        own printers go under <code className="rounded bg-gray-100 px-1">public/printers/</code>.
+        Connect to any nearby BLE device, inspect its GATT tree, and tune the draft below. Built-in profiles ship in{' '}
+        <code className="rounded bg-gray-100 px-1">public/printers.yaml</code>. You can try a profile in{' '}
+        <strong>this tab only</strong> (no server files) or add YAML under <code className="rounded bg-gray-100 px-1">public/printers/</code> for a
+        persistent deployment.
       </p>
 
-      <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-800">
-        <h2 className="font-semibold text-gray-900">How to add a printer to this project</h2>
-        <ol className="mt-2 list-decimal space-y-1.5 pl-5 marker:text-gray-500">
-          <li>
-            Connect to the device below and adjust the suggested UUIDs and prefixes until the draft matches your
-            hardware.
-          </li>
-          <li>
-            Save the YAML fragment as{' '}
-            <code className="rounded bg-white px-1 ring-1 ring-gray-200">public/printers/&lt;printer_id&gt;.yaml</code>,
-            using the same <code className="rounded bg-white px-1 ring-1 ring-gray-200">printer_id</code> as the
-            filename stem.
-          </li>
-          <li>Reload the app (full page load) so the browser picks up the new file.</li>
-          <li>
-            Optional: use <code className="rounded bg-white px-1 ring-1 ring-gray-200">public/printers/manifest.yaml</code> for{' '}
-            <code className="rounded bg-white px-1 ring-1 ring-gray-200">extra_optional_services</code> (extra GATT UUIDs),
-            or for a <code className="rounded bg-white px-1 ring-1 ring-gray-200">printers:</code> list only if your host
-            cannot serve JSON on <code className="rounded bg-white px-1 ring-1 ring-gray-200">/printers/</code>. Built-in
-            extras stay in <code className="rounded bg-white px-1 ring-1 ring-gray-200">printers.yaml</code>.
-          </li>
-        </ol>
-        <p className="mt-2 text-xs text-gray-600">
-          Discovery uses <code className="rounded bg-white px-1 ring-1 ring-gray-200">GET /printers/</code> for a JSON
-          directory index (nginx in Docker; Vite dev/preview matches the same format). Every{' '}
-          <code className="rounded bg-white px-1 ring-1 ring-gray-200">*.yaml</code> except{' '}
-          <code className="rounded bg-white px-1 ring-1 ring-gray-200">manifest.yaml</code> is loaded—no{' '}
-          <code className="rounded bg-white px-1 ring-1 ring-gray-200">printers:</code> list required. User printers run
-          after built-ins, sorted by file name.
-        </p>
-        <p className="mt-2 text-xs text-gray-600">
-          Docker: bind-mount your host <code className="rounded bg-white px-1 ring-1 ring-gray-200">public/printers</code>{' '}
-          directory so you can add or edit user printers without rebuilding the image (see the project README).
-        </p>
-        <p className="mt-3 border-t border-gray-200 pt-3 text-gray-700">
-          To have the printer included <strong>in the upstream app</strong> for everyone, please{' '}
+      <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-800 space-y-4">
+        <div>
+          <h2 className="font-semibold text-gray-900">Tab only (no files)</h2>
+          <p className="mt-1 text-gray-700">
+            After you finish the draft, use <strong>Use for this tab</strong> below. The definition is stored in{' '}
+            <code className="rounded bg-white px-1 ring-1 ring-gray-200">sessionStorage</code> for this browser tab only
+            (closing the tab removes it). Any catalog entry with the same <code className="rounded bg-white px-1 ring-1 ring-gray-200">printer_id</code> is
+            replaced so you can test overrides. The receipt page reloads the merged catalog automatically—no full page refresh
+            required.
+          </p>
+        </div>
+
+        <div>
+          <h2 className="font-semibold text-gray-900">Persistent (server or Docker)</h2>
+          <ol className="mt-1 list-decimal space-y-1.5 pl-5 marker:text-gray-500 text-gray-700">
+            <li>
+              Save the fragment as <code className="rounded bg-white px-1 ring-1 ring-gray-200">public/printers/&lt;printer_id&gt;.yaml</code> (filename stem =
+              <code className="rounded bg-white px-1 ring-1 ring-gray-200">printer_id</code>).
+            </li>
+            <li>
+              The app loads user files from a <strong>JSON directory index</strong>: <code className="rounded bg-white px-1 ring-1 ring-gray-200">GET /printers/</code>{' '}
+              (nginx <code className="rounded bg-white px-1 ring-1 ring-gray-200">autoindex_format json</code> in the shipped image; Vite dev/preview returns the same shape). Every{' '}
+              <code className="rounded bg-white px-1 ring-1 ring-gray-200">*.yaml</code> in that folder is merged except{' '}
+              <code className="rounded bg-white px-1 ring-1 ring-gray-200">manifest.yaml</code> and <code className="rounded bg-white px-1 ring-1 ring-gray-200">printers.yaml</code>. Order: built-ins first, then user files <strong>sorted by file name</strong>.
+            </li>
+            <li>
+              Optional <code className="rounded bg-white px-1 ring-1 ring-gray-200">public/printers/manifest.yaml</code>: use{' '}
+              <code className="rounded bg-white px-1 ring-1 ring-gray-200">extra_optional_services</code> for extra GATT UUIDs, or a{' '}
+              <code className="rounded bg-white px-1 ring-1 ring-gray-200">printers:</code> id list only if <code className="rounded bg-white px-1 ring-1 ring-gray-200">GET /printers/</code> is not JSON on your host.
+            </li>
+            <li>Reload once so the browser fetches new static files from the server.</li>
+            <li>
+              Docker: bind-mount <code className="rounded bg-white px-1 ring-1 ring-gray-200">./CTP500-React/public/printers</code> →{' '}
+              <code className="rounded bg-white px-1 ring-1 ring-gray-200">/usr/share/nginx/html/printers</code> (see repo README).
+            </li>
+          </ol>
+        </div>
+
+        <p className="border-t border-gray-200 pt-3 text-gray-700">
+          To ship support upstream for everyone,{' '}
           <a
             href={UPSTREAM_NEW_ISSUE_URL}
             target="_blank"
@@ -357,8 +389,8 @@ ${mtuLine}${postLine}`;
           >
             open a GitHub issue
           </a>{' '}
-          and paste or attach your printer YAML (the fragment file contents, plus the printer id and any notes about the
-          device model). Maintainers can then fold it into <code className="rounded bg-white px-1 ring-1 ring-gray-200">public/printers.yaml</code>.
+          and paste or attach the YAML fragment plus the printer id and device notes. Maintainers can add it to{' '}
+          <code className="rounded bg-white px-1 ring-1 ring-gray-200">public/printers.yaml</code>.
         </p>
       </div>
 
@@ -453,7 +485,14 @@ ${mtuLine}${postLine}`;
 
       {step === 'done' && services && (
         <div className="space-y-3 rounded-lg border p-4">
-          <h2 className="font-semibold">YAML fragment (save as public/printers/&lt;printer_id&gt;.yaml)</h2>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-semibold">YAML fragment</h2>
+            {getSessionPrinterRecords().length > 0 && (
+              <span className="text-xs text-gray-600">
+                Tab-only printers saved: {getSessionPrinterRecords().map((r) => r.id).join(', ')}
+              </span>
+            )}
+          </div>
           <div className="grid gap-2 sm:grid-cols-2">
             <label className="text-sm">
               <span className="text-gray-700">printer_id (filename stem)</span>
@@ -562,14 +601,36 @@ ${mtuLine}${postLine}`;
             rows={14}
             className="w-full rounded border bg-gray-50 p-2 font-mono text-xs"
           />
-          <button
-            type="button"
-            disabled={!generatedYaml}
-            onClick={() => void copyYaml()}
-            className="rounded bg-violet-600 px-3 py-2 text-sm font-medium text-white disabled:bg-gray-300"
-          >
-            Copy YAML
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={!generatedYaml}
+              onClick={() => void copyYaml()}
+              className="rounded bg-violet-600 px-3 py-2 text-sm font-medium text-white disabled:bg-gray-300"
+            >
+              Copy YAML
+            </button>
+            <button
+              type="button"
+              disabled={!generatedYaml}
+              onClick={() => void enableSessionPrinter()}
+              className="rounded bg-emerald-700 px-3 py-2 text-sm font-medium text-white disabled:bg-gray-300"
+            >
+              Use for this tab
+            </button>
+            <button
+              type="button"
+              onClick={() => void clearSessionOnlyPrinters()}
+              className="rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 hover:bg-gray-50"
+            >
+              Clear tab-only printers
+            </button>
+          </div>
+          {sessionUiMessage && (
+            <p className="text-sm text-gray-700" role="status">
+              {sessionUiMessage}
+            </p>
+          )}
         </div>
       )}
     </div>

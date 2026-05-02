@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { mergeUserPrinterFragments, parsePrintersYamlText, type PrintersCatalog } from './parsePrintersYaml';
+import { loadPrintersCatalogWithSession, SESSION_PRINTERS_CHANGED_EVENT } from './sessionPrinters';
+import type { PrintersCatalog } from './parsePrintersYaml';
 
 export type PrintersCatalogLoadState =
   | { status: 'loading' }
@@ -11,32 +12,28 @@ function urlPrefix(): string {
   return base.endsWith('/') ? base : `${base}/`;
 }
 
-async function loadPrintersCatalog(): Promise<PrintersCatalog> {
-  const prefix = urlPrefix();
-  const builtInUrl = `${prefix}printers.yaml`;
-  const res = await fetch(builtInUrl, { cache: 'no-store' });
-  if (!res.ok) {
-    throw new Error(`Failed to load ${builtInUrl}: HTTP ${res.status}`);
-  }
-  const base = parsePrintersYamlText(await res.text());
-  return await mergeUserPrinterFragments(base, prefix);
-}
-
 /**
- * Loads built-in `printers.yaml`, then merges user fragments from `printers/` using a JSON directory
- * index (`GET printers/`, nginx autoindex) or, if that is unavailable, the `printers:` list in
- * `printers/manifest.yaml`. Optional `extra_optional_services` in the manifest are merged whenever
- * that file exists. Re-fetched on each full page load so ops can edit files without rebuilding.
+ * Loads built-in `printers.yaml`, merges user `printers/*.yaml` (JSON `GET printers/` or manifest
+ * fallback), then merges **tab-only** definitions from `sessionStorage` (see `/printer-setup`).
+ * Listens for `SESSION_PRINTERS_CHANGED_EVENT` so the catalog refreshes without a full page reload.
  */
 export function usePrintersCatalog(): PrintersCatalogLoadState {
   const [state, setState] = useState<PrintersCatalogLoadState>({ status: 'loading' });
+  const [reloadToken, setReloadToken] = useState(0);
+
+  useEffect(() => {
+    const onSessionPrintersChanged = () => setReloadToken((n) => n + 1);
+    window.addEventListener(SESSION_PRINTERS_CHANGED_EVENT, onSessionPrintersChanged);
+    return () => window.removeEventListener(SESSION_PRINTERS_CHANGED_EVENT, onSessionPrintersChanged);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
+    setState({ status: 'loading' });
 
     void (async () => {
       try {
-        const catalog = await loadPrintersCatalog();
+        const catalog = await loadPrintersCatalogWithSession(urlPrefix());
         if (!cancelled) {
           setState({ status: 'ready', catalog });
         }
@@ -51,7 +48,7 @@ export function usePrintersCatalog(): PrintersCatalogLoadState {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reloadToken]);
 
   return state;
 }

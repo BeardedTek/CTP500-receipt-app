@@ -98,7 +98,7 @@ Built-in printers live in `CTP500-React/public/printers.yaml` (site root). User 
 
 Docker Compose bind-mounts `./CTP500-React/public/printers` to `/usr/share/nginx/html/printers` so you can drop new YAML files on the host without rebuilding the image; built-ins stay in the image from `printers.yaml` unless you rebuild with a changed file.
 
-Use the in-app helper at **`/printer-setup`** (link on the receipt page) to pick any BLE device, inspect its GATT services, and copy a starter YAML fragment into `public/printers/<printer_id>.yaml`.
+Use the in-app helper at **`/printer-setup`** (link on the receipt page) to pick any BLE device, inspect its GATT services, copy a starter YAML fragment, or **Use for this tab** to store the draft in `sessionStorage` (tab-only, no server files; overrides a matching `printer_id` in the loaded catalog until cleared).
 
 The app currently ships with:
 
